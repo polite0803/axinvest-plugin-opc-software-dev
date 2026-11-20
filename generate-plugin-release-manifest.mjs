@@ -43,7 +43,9 @@ import {
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+// 主仓脚本位于 scripts/，独立插件仓则把同一脚本放在仓根。
+const ROOT = basename(SCRIPT_DIR) === "scripts" ? resolve(SCRIPT_DIR, "..") : SCRIPT_DIR;
 const argv = process.argv.slice(2);
 
 function fail(message) {

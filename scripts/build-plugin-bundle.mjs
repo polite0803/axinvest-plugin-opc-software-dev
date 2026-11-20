@@ -12,6 +12,7 @@
  *   node scripts/build-plugin-bundle.mjs --plugin opc     # 打包 opc 插件（#36 骨架）
  *   node scripts/build-plugin-bundle.mjs --release       # 构建 release
  *   node scripts/build-plugin-bundle.mjs --target <triple> # 指定 Cargo target 构建
+ *   node scripts/build-plugin-bundle.mjs --plugin-version <版本> # 显式发布版本（声明式插件必需）
  *   node scripts/build-plugin-bundle.mjs --check         # 打包后真起一次 worker 做握手 + 停机回执
  *   node scripts/build-plugin-bundle.mjs --out <dir>     # 自定义输出目录
  *
@@ -38,8 +39,12 @@ const check = argv.includes("--check");
 const outFlag = argv.indexOf("--out");
 const pluginFlag = argv.indexOf("--plugin");
 const targetFlag = argv.indexOf("--target");
+const pluginVersionFlag = argv.indexOf("--plugin-version");
 const pluginName = pluginFlag >= 0 && argv[pluginFlag + 1] ? argv[pluginFlag + 1] : "stock";
 const targetTriple = targetFlag >= 0 && argv[targetFlag + 1] ? argv[targetFlag + 1] : null;
+const requestedPluginVersion = pluginVersionFlag >= 0 && argv[pluginVersionFlag + 1]
+  ? argv[pluginVersionFlag + 1]
+  : null;
 
 /**
  * 插件规格表（键 = `--plugin` 取值）。
@@ -242,6 +247,11 @@ if (spec.packageName) {
   const metadata = JSON.parse(metadataRaw.stdout);
   const workerPackage = metadata.packages.find((p) => p.name === spec.packageName);
   if (!workerPackage) { fail(`cargo metadata 里找不到 ${spec.packageName}`); }
+  if (requestedPluginVersion && requestedPluginVersion !== workerPackage.version) {
+    fail(
+      `--plugin-version=${requestedPluginVersion} 与 ${spec.packageName} 的 Cargo 版本 ${workerPackage.version} 不一致`,
+    );
+  }
   workerVersion = workerPackage.version;
 
   const targetDir = metadata.target_directory;
@@ -257,6 +267,8 @@ if (spec.packageName) {
   const stagedBinary = path.join(binDir, binaryName);
   fs.copyFileSync(builtBinary, stagedBinary);
   sha256 = createHash("sha256").update(fs.readFileSync(stagedBinary)).digest("hex");
+} else if (requestedPluginVersion) {
+  workerVersion = requestedPluginVersion;
 }
 
 // 3.5) 前端资产：源目录整树拷进安装根。
@@ -3634,8 +3646,9 @@ function withRequiredPermission(commands) {
 }
 
 function opcManifest({ version, binaryName, sha256 }) {
-  const domainPackManifests = fs
-    .readdirSync(path.join(workspaceRoot, "plugin-opc", "domain_packs"))
+  const domainPackManifests = (fs.existsSync(path.join(workspaceRoot, "plugin-opc", "domain_packs"))
+      ? fs.readdirSync(path.join(workspaceRoot, "plugin-opc", "domain_packs"))
+      : [])
     .filter((f) => f.endsWith(".json"))
     .sort()
     .map((f) => path.posix.join(DOMAIN_PACK_DIR, f));
