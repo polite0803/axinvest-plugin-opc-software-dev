@@ -1,0 +1,8 @@
+{
+  "owner": "polite0803",
+  "repo": "axinvest-plugin-opc-software-dev",
+  "plugin": "opc-software-dev",
+  "rustVersion": "3.0.1",
+  "pluginVersion": "1.0.0",
+  "releaseManifestUrl": "https://github.com/polite0803/axinvest-plugin-opc-software-dev/releases/latest/download/release.json"
+}
