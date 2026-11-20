@@ -1,0 +1,20 @@
+{
+  "id": "software_dev",
+  "pluginId": "plugin-opc-software-dev",
+  "transportOwner": "plugin-opc-common",
+  "page": {
+    "id": "domain:devops-software",
+    "path": "/opc/domain/software-dev"
+  },
+  "capabilities": [
+    "tool:OpcListProjects",
+    "tool:OpcCreateProject",
+    "tool:FileWrite",
+    "tool:WebSearch",
+    "tool:OpcAddMilestone"
+  ],
+  "commands": [],
+  "calls": [
+    "opc.store"
+  ]
+}
