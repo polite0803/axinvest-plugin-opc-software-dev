@@ -1,0 +1,33 @@
+name: Plugin CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  RUST_BACKTRACE: short
+  PLUGIN_NAME: opc-software-dev
+  PLUGIN_VERSION: 1.0.0
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Install bundle-only Node dependencies
+        if: hashFiles('package.json') != ''
+        run: npm install --no-audit --no-fund
+      - name: Check independent repository boundaries
+        run: node scripts/check-release-dependencies.mjs
+      - name: Build and verify plugin bundle
+        run: node scripts/build-plugin-bundle.mjs --plugin "${PLUGIN_NAME}" --plugin-version "${PLUGIN_VERSION}" --check --out "dist/plugins/${PLUGIN_NAME}"
