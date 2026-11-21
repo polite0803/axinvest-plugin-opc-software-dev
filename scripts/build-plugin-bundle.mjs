@@ -170,11 +170,12 @@ const domainPackSourceByPlugin = Object.fromEntries(
     .filter((p) => p.pluginId !== "plugin-opc")
     .map((p) => [p.pluginId.replace(/^plugin-/, ""), path.join(workspaceRoot, "crates", p.pluginId, "domain_packs")]),
 );
-// 独立仓没有 crates/ 布局：先把所有映射重写到仓根的 plugin-<name>/domain_packs。
-for (const [packKey, source] of Object.entries(domainPackSourceByPlugin)) {
-  domainPackSourceByPlugin[packKey] = source.replace(
-    `/crates/plugin-${pluginName}/domain_packs`,
-    `/plugin-${pluginName}/domain_packs`,
+// 独立仓没有 crates/ 布局：直接按仓根布局重建映射，不用字符串替换。
+// 原 .replace(`/crates/...`) 只在 POSIX 上命中；Windows 的 path.join 产出反斜杠，
+// 替换失败会让 Release 的 Windows job 仍读 crates/ 路径并以 ENOENT 失败。
+for (const packKey of Object.keys(domainPackSourceByPlugin)) {
+  domainPackSourceByPlugin[packKey] = path.join(
+    workspaceRoot, "plugin-" + pluginName, "domain_packs",
   );
 }
 // 独立单插件仓没有其它插件的域包源码；owner 冲突检查只读本仓随包资产。
