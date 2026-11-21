@@ -58,10 +58,19 @@ const requestedPluginVersion = pluginVersionFlag >= 0 && argv[pluginVersionFlag 
  */
 const PLUGIN_SPECS = {
   "opc-software-dev": {
-    packageName: null,
+    packageName: "axagent-plugin-opc-software-dev",
     webDir: path.join("plugin-opc-software-dev", "web"),
     uiSchema: null,
-    manifest: declarativeOpcManifest("opc-software-dev", "软件开发", "software_dev"),
+    commands: [
+      "opc_software_dev_opc_list_projects",
+      "opc_software_dev_opc_create_project",
+      "opc_software_dev_file_write",
+      "opc_software_dev_web_search",
+      "opc_software_dev_opc_add_milestone",
+      "opc_software_dev_batch_validate_entities",
+      "opc_software_dev_run_automation_rules",
+    ],
+    manifest: opcWorkerDomainManifest("opc-software-dev", "软件开发", "software_dev"),
   },
 
 };
@@ -196,8 +205,10 @@ const expectedDomainPackIds = pluginName === "opc"
     .filter((p) => p.pluginId === `plugin-${pluginName}` && ownedDomainPackIds.has(p.id))
     .map((p) => p.id);
 const DOMAIN_PACK_DIR = "domain_packs";
-const declarativeDomainPackId = ownershipRegistry.policy?.verticalSlices?.find(
-  (slice) => slice.pluginId === `plugin-${pluginName}` && slice.manifestStrategy === "declarative-only",
+// 所有 OPC 域（声明式与 worker）都带静态展示区，页面自检不再按 manifestStrategy 分流；
+// 是否额外要求 bundle.js，由本插件 PLUGIN_SPECS.commands 是否非空决定。
+const opcDomainPackIdForPage = ownershipRegistry.policy?.verticalSlices?.find(
+  (slice) => slice.pluginId === `plugin-${pluginName}`,
 )?.domainPackId ?? null;
 
 /** 各插件 logical manifest 的合法 owner：由底册 verticalSlices 唯一权威。 */
@@ -393,8 +404,8 @@ async function checkStagedBundle(declared, root) {
   } else if ((declared.pages ?? []).length > 0) {
     fail("--check：本插件未声明前端源（webDir=null），清单不得声明 pages[]");
   }
-  if (declarativeDomainPackId) {
-    checkDeclarativePage(root, declarativeDomainPackId);
+  if (opcDomainPackIdForPage) {
+    checkOpcDomainPage(root, opcDomainPackIdForPage, Array.isArray(spec.commands) && spec.commands.length > 0);
   }
   checkDeclaredTaskSources(declared, root);
   if (domainPackSource) { checkDeclaredDomainPacks(root); }
@@ -533,20 +544,27 @@ function checkDeclaredPages(declared, root) {
   console.log(`[plugin-bundle] --check ✅ ${bundlePages} 个 bundle 页的 entry 均存在且在白名单内`);
 }
 
-/** 声明式域包页面的安装产物自检：只读随包静态数据，不依赖主机源码树。 */
-function checkDeclarativePage(root, expectedId) {
+/** OPC 域包页面的安装产物自检：静态数据区所有域都查，worker 域额外查 bundle.js。 */
+function checkOpcDomainPage(root, expectedId, withWorkerBundle) {
   const pageDir = path.join(root, "pages");
   const pagePath = path.join(pageDir, "index.html");
   const dataPath = path.join(pageDir, "domain-data.js");
   if (!fs.existsSync(pagePath) || !fs.existsSync(dataPath)) {
-    fail(`--check：声明式页面产物缺失：${pageDir}`);
+    fail(`--check：域包页面产物缺失：${pageDir}`);
   }
   const html = fs.readFileSync(pagePath, "utf8");
   if (!html.includes('src="./domain-data.js"')) {
-    fail("--check：声明式页面没有加载 domain-data.js");
+    fail("--check：域包页面没有加载 domain-data.js");
+  }
+  if (withWorkerBundle) {
+    const bundlePath = path.join(pageDir, "bundle.js");
+    if (!fs.existsSync(bundlePath)) { fail("--check：worker 域页面缺少 bundle.js"); }
+    if (!html.includes('src="./bundle.js"')) {
+      fail("--check：worker 域页面没有加载 bundle.js");
+    }
   }
   for (const selector of ["#capabilities", "#kpis", "#workflow-steps", "#data-sources", "#acceptance"]) {
-    if (!html.includes(selector)) { fail(`--check：声明式页面缺少渲染区 ${selector}`); }
+    if (!html.includes(selector)) { fail(`--check：域包页面缺少渲染区 ${selector}`); }
   }
   const raw = fs.readFileSync(dataPath, "utf8");
   const match = /^globalThis\.AX_OPC_DOMAIN_DATA\s*=\s*([\s\S]*);\s*$/.exec(raw);
@@ -563,10 +581,10 @@ function checkDeclarativePage(root, expectedId) {
     fail(`--check：domain-data.js id=${parsed.id}，期望 ${expectedId}`);
   }
   if (!Array.isArray(parsed.capabilities) || parsed.capabilities.length === 0) {
-    fail("--check：声明式域包至少需要展示一条 capability");
+    fail("--check：域包至少需要展示一条 capability");
   }
   console.log(
-    `[plugin-bundle] --check ✅ 声明式页面数据完整（${parsed.id}：${parsed.capabilities.length} 能力 / ${parsed.kpis.length} KPI / ${parsed.workflowSteps.length} 步骤）`,
+    `[plugin-bundle] --check ✅ 域包页面数据完整（${parsed.id}：${parsed.capabilities.length} 能力 / ${parsed.kpis.length} KPI / ${parsed.workflowSteps.length} 步骤）`,
   );
 }
 
@@ -5216,6 +5234,118 @@ function opcAccountingManifest({ version, binaryName, sha256 }) {
       },
     ],
     integrity: { algorithm: "sha256", hash: sha256 },
+  };
+}
+
+/**
+ * 通用域 worker 清单工厂（统一插件规范的唯一形态）。
+ *
+ * 只从插件名 / 标题 / 域包 id / 命令名列表派生清单，命令实现留在 Rust worker 内：
+ * `PLUGIN_SPECS[name].commands` 是命令面的唯一登记处，契约 checker 会逐项对账。
+ * 工具入参 schema 按命令后缀匹配四种通用形状（`web_search` / `file_read` /
+ * `file_write` / `run_automation_rules`），不为每个域另写一份 —— 11 域共用同一份
+ * 工具实现，schema 也必须同源。
+ */
+function opcWorkerDomainManifest(name, title, pack) {
+  return ({ version, binaryName, sha256 }) => {
+    const commands = (PLUGIN_SPECS[name]?.commands ?? []).map((commandName) => {
+      const description = `OPC ${title}域包命令：${commandName}`;
+      if (commandName.endsWith("_web_search")) {
+        return {
+          name: commandName,
+          description,
+          command: `worker://${commandName}`,
+          requiredPermission: "read-only",
+          inputSchema: {
+            type: "object",
+            properties: { query: { type: "string", description: "搜索关键词" } },
+            required: ["query"],
+          },
+        };
+      }
+      if (commandName.endsWith("_file_read")) {
+        return {
+          name: commandName,
+          description,
+          command: `worker://${commandName}`,
+          requiredPermission: "read-only",
+          inputSchema: {
+            type: "object",
+            properties: { path: { type: "string", description: "工作区相对路径" } },
+            required: ["path"],
+          },
+        };
+      }
+      if (commandName.endsWith("_file_write")) {
+        return {
+          name: commandName,
+          description,
+          command: `worker://${commandName}`,
+          requiredPermission: "workspace-write",
+          inputSchema: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "工作区相对路径" },
+              content: { type: "string", description: "写入内容" },
+            },
+            required: ["path", "content"],
+          },
+        };
+      }
+      if (commandName.endsWith("_run_automation_rules")) {
+        return {
+          name: commandName,
+          description,
+          command: `worker://${commandName}`,
+          requiredPermission: "workspace-write",
+          inputSchema: {
+            type: "object",
+            properties: {
+              // `capabilityPackId` 由 worker 按自身身份固定注入，不暴露给调用方越域。
+              entityType: { type: "string", description: "实体类型" },
+              entityId: { type: "string", description: "实体 id" },
+              status: { type: "string", description: "实体状态过滤" },
+              overdueDays: { type: "number", description: "逾期天数阈值" },
+              createdDays: { type: "number", description: "创建天数阈值" },
+              fields: { type: "object", description: "规则匹配字段" },
+            },
+            required: ["entityType", "entityId"],
+          },
+        };
+      }
+      // 其余工具命令（OpcSearchWiki / OpcCreateProject 等）的真实入参 schema 在宿主工具里，
+      // 清单只声明「对象」这一形状；worker 不做字段级校验，避免复制宿主 schema 造成双权威。
+      // 权限按命令语义保守取值：List/Search/Get/Validate 是读，其余按写处理（含 Bash / FileWrite）。
+      // 实体批量校验走 opc.store 的读 op（只校验不落库），不能因命令名不含读取动词而误标写权限。
+      const readTool = /_(?:list|search|get|read|find|query|batch_validate)_/.test(commandName);
+      return {
+        name: commandName,
+        description,
+        command: `worker://${commandName}`,
+        requiredPermission: readTool ? "read-only" : "workspace-write",
+        inputSchema: {
+          type: "object",
+          description: "参数由宿主工具校验；worker 只检查对象形状并逐字转发",
+        },
+      };
+    });
+    return {
+      name,
+      version,
+      description: `OPC ${title}域包：域专属 worker（命令经宿主接缝复用工具实现）`,
+      // 与既有域 worker 同档：`subprocess_execution` 是宿主启动命令 shell hook 的硬要求，
+      // `write` 同时满足 opc.store 写 op 与 tool.set 写工具闸（FileWrite / Bash）。
+      permissions: ["subprocess_execution", "write"],
+      mcp_servers: [],
+      skills: [],
+      agents: [],
+      defaultEnabled: true,
+      worker: { program: path.posix.join("bin", binaryName) },
+      pages: [{ id: name, title, entry: PAGE_ENTRY, loading: "bundle" }],
+      domainPacks: [path.posix.join(DOMAIN_PACK_DIR, `${pack}.json`)],
+      commands,
+      integrity: { algorithm: "sha256", hash: sha256 },
+    };
   };
 }
 

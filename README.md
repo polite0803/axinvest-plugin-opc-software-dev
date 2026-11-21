@@ -3,8 +3,8 @@
 本目录由 `scripts/generate-plugin-independent-repos.mjs` 从 AxInvest 主仓非破坏性生成。
 
 - 插件名：opc-software-dev
-- Cargo 包：无（声明式插件）
-- SDK 依赖：副本 无（声明式插件）
+- Cargo 包：axagent-plugin-opc-software-dev
+- SDK 依赖：副本 plugin-proto、plugin-opc-core、plugin-testkit
 - CI：`.github/workflows/plugin-ci.yml`
 - 发布：推送与 `plugin.json` 版本一致的 `v*` tag，由 `.github/workflows/release-plugin.yml` 生成 GitHub Release
 - 主应用发布地址：`https://github.com/polite0803/axinvest-plugin-opc-software-dev/releases/latest/download/release.json`
