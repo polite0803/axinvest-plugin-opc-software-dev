@@ -170,18 +170,20 @@ const domainPackSourceByPlugin = Object.fromEntries(
     .filter((p) => p.pluginId !== "plugin-opc")
     .map((p) => [p.pluginId.replace(/^plugin-/, ""), path.join(workspaceRoot, "crates", p.pluginId, "domain_packs")]),
 );
-let domainPackSource = domainPackSourceByPlugin[pluginName] ?? null;
+// 独立仓没有 crates/ 布局：先把所有映射重写到仓根的 plugin-<name>/domain_packs。
 for (const [packKey, source] of Object.entries(domainPackSourceByPlugin)) {
   domainPackSourceByPlugin[packKey] = source.replace(
     `/crates/plugin-${pluginName}/domain_packs`,
     `/plugin-${pluginName}/domain_packs`,
   );
-  if (packKey === pluginName) domainPackSource = domainPackSourceByPlugin[packKey];
 }
 // 独立单插件仓没有其它插件的域包源码；owner 冲突检查只读本仓随包资产。
 for (const key of Object.keys(domainPackSourceByPlugin)) {
   if (key !== pluginName) delete domainPackSourceByPlugin[key];
 }
+// 必须在映射重写之后再取 domainPackSource：旧版在重写前取值会留下 crates/ 路径，
+// Windows Release --check 实测报「域包清单目录不存在：...\crates\plugin-opc-accounting\domain_packs」。
+const domainPackSource = domainPackSourceByPlugin[pluginName] ?? null;
 const ownedDomainPackIds = new Set(
   (ownershipRegistry.policy?.verticalSlices ?? [])
     .filter((slice) => slice.pluginId !== "plugin-opc")
